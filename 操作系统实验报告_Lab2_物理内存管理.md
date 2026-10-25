@@ -179,7 +179,28 @@
 **Prompt 2（测试验证结果分析）：**
 
 ```text
-我刚才基于你的代码实现了 Best-Fit 算法，请帮我分析 best_fit_check() 函数覆盖了哪些核心行为和边界情况？
+[PROMPT]
+
+运行 `make grade` 时，`check page init` 报 WRONG。但我的 `make qemu` 能正常输出 `check_alloc_page() succeeded!`。我在 `page_init` 里用 `npage * sizeof(struct Page)` 减去内核占用算出了 `nr_free`。请分析测试脚本到底在检查 `page_init` 的什么核心指标？我遗漏了什么计算？
+
+#### [RELY]
+
+- `check_alloc_page()` 的基本逻辑（仅测试分配与释放能力）。
+- 物理内存的实际划分范围（OpenSBI、内核、`Page` 数组、空闲页）。
+- 测试脚本对 `nr_free`（可用物理页总数）的精确校验。
+
+[GUARANTEE]
+
+分析结果需要说明：
+1. 为什么分配逻辑正确但初始化数量不对。
+2. `Page` 描述符数组本身占用的物理内存大小如何精确计算。
+3. OpenSBI 等保留区的物理地址范围是否被正确扣除。
+
+[SPECIFICATION]
+
+- 需要提供计算剩余可用物理页的精确数学公式（考虑页对齐和边界情况）。
+- 不得通过修改测试脚本来迁就错误的 `nr_free` 值。
+
 ```
 
 #### 实现与 Bug 解决过程
