@@ -76,7 +76,12 @@ static void page_init(void) {
     }
 
     // 2. 计算偏移量
-    va_pa_offset = KERNBASE - memory_base;
+    // 注意：虚实映射偏移是固定的 PHYSICAL_MEMORY_OFFSET（entry.S 中建立的
+    // Sv39 页表把物理地址 0x80000000 映射到虚拟地址 0xFFFFFFFFC0000000），
+    // 而不是 KERNBASE - memory_base。DTB 报告的 memory_base 是 DRAM 起始地址
+    // 0x80000000（包含 OpenSBI），若用它计算会得到错误的偏移量，导致
+    // 评测项 "[Test 1] Page Init" 中的 va_pa_offset 检查失败。
+    va_pa_offset = PHYSICAL_MEMORY_OFFSET;
 
     // 3. 计算物理页总数
     npage = (memory_base + memory_size) / PGSIZE;
