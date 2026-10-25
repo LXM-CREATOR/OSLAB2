@@ -76,20 +76,28 @@
 **2. 我们的 Prompt 设计：**
 
 ```text
-你是一个操作系统内核开发者，请帮我完成 ucore 实验中 kern/mm/pmm.c 下的 page_init() 函数。
+在阅读 `pmm.c` 时，我注意到代码中使用了全局变量 `va_pa_offset`。在开启了虚拟内存的 RISC-V Sv39 架构下，内核的虚拟地址和物理地址到底是如何转换的？为什么内核通常需要运行在高地址（例如 `0xFFFFFFFFC0000000`）？请解释其底层逻辑，但不要生成具体代码。
 
-已知条件：
-1. 物理内存起始为 get_memory_base()，大小为 get_memory_size()。
-2. 内核镜像结束的虚拟地址用 extern char end[] 表示。
-3. 页大小为 4KB，结构体 struct Page 已经定义好。
-4. 物理地址和虚拟地址的偏移量存在全局变量 va_pa_offset 中。
+[RELY]
 
-任务要求：
-1. 计算总页数 npage，并将 pages 指向紧挨着 end 符号向上页对齐后的地址。
-2. 排除 OpenSBI、内核和 Page 数组自身占用的页，将它们标记为 Reserved。
-3. 把剩下的空闲物理页区间通过 init_memmap 交给 pmm_manager。
+- 链接脚本中的 `BASE_ADDRESS` 设置。
+- RISC-V Sv39 分页机制（三级页表、大页映射）。
+- 虚拟地址与物理地址的固定偏移量 `va_pa_offset`。
+- `PADDR()` 与 `KADDR()` 宏的定义与作用。
 
-请给出完整的 C 代码，并使用 PADDR 宏处理地址转换。
+[GUARANTEE]
+
+分析结果需要说明：
+1. 页表如何实现内核空间的高半区（High Half）映射。
+2. `va_pa_offset` 的计算方式及其在地址转换中的数学关系。
+3. 为什么这种设计能提高内核访问物理内存的效率。
+
+[SPECIFICATION]
+
+- 必须基于 RISC-V 的虚拟内存机制解释，而非 x86。
+- 明确虚拟地址减去偏移量等于物理地址的直接计算关系。
+- 不得修改已有的地址转换宏或页表初始化流程。
+
 ```
 
 #### 实现与 Bug 解决过程
