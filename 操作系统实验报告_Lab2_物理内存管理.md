@@ -76,7 +76,7 @@
 **2. 我们的 Prompt 设计：**
 
 ```text
-在阅读 `pmm.c` 时，我注意到代码中使用了全局变量 `va_pa_offset`。在开启了虚拟内存的 RISC-V Sv39 架构下，内核的虚拟地址和物理地址到底是如何转换的？为什么内核通常需要运行在高地址（例如 `0xFFFFFFFFC0000000`）？请解释其底层逻辑，但不要生成具体代码。
+在阅读 `pmm.c` 时，我注意到代码中使用了全局变量 `va_pa_offset`。在开启了虚拟内存的 RISC-V Sv39 架构下，内核的虚拟地址和物理地址到底是如何转换的？为什么内核通常需要运行在高地址（例如 `0xFFFFFFFFC0000000`）？
 
 [RELY]
 
@@ -120,27 +120,227 @@
 **2. 我们的 Prompt 设计：**
 
 ```text
-在阅读 `pmm.c` 时，我注意到代码中使用了全局变量 `va_pa_offset`。在开启了虚拟内存的 RISC-V Sv39 架构下，内核的虚拟地址和物理地址到底是如何转换的？为什么内核通常需要运行在高地址（例如 `0xFFFFFFFFC0000000`）？请解释其底层逻辑，但不要生成具体代码。
+# 提示词二：Best-Fit 连续物理内存分配器
 
-[RELY]
+## [PROMPT]
 
-- 链接脚本中的 `BASE_ADDRESS` 设置。
-- RISC-V Sv39 分页机制（三级页表、大页映射）。
-- 虚拟地址与物理地址的固定偏移量 `va_pa_offset`。
-- `PADDR()` 与 `KADDR()` 宏的定义与作用。
+你是一名熟悉 C 语言、双向链表和 ucore 物理页管理框架的内核开发者。请在 `kern/mm/best_fit_pmm.c` 中标有 `//lab2 function2-2 YOUR CODE` 的位置实现 Best-Fit 连续物理内存分配器，并在 `kern/mm/pmm.c` 的 `init_pmm_manager()` 中选择 `best_fit_pmm_manager`。
 
-[GUARANTEE]
+Best-Fit 的基本目标是：分配 `n` 个连续页时，遍历全部空闲块，在所有 `property >= n` 的候选块中选取容量最小的一块；释放时保持空闲链表按物理地址升序排列，并合并物理地址连续的相邻空闲块。
 
-分析结果需要说明：
-1. 页表如何实现内核空间的高半区（High Half）映射。
-2. `va_pa_offset` 的计算方式及其在地址转换中的数学关系。
-3. 为什么这种设计能提高内核访问物理内存的效率。
+### 操作约束
 
-[SPECIFICATION]
+1. 必须直接修改工程中的真实文件，不能只展示示例代码。
+2. 允许修改范围仅限：
+   - `kern/mm/best_fit_pmm.c` 中待实现的分配器代码；
+   - `kern/mm/pmm.c` 的 `init_pmm_manager()` 中管理器选择语句。
+3. `basic_check()`、`best_fit_check()` 及其已有断言和测试场景不得修改、删除或绕过。
+4. 不得修改 `pmm.h`、`memlayout.h`、`list.h` 和 `best_fit_pmm.h` 中已有接口与数据结构。
+5. 必须复用工程已有双向链表接口，不得另外实现数组、树或新的容器替代 `free_list`。
+6. 可以新增仅在 `best_fit_pmm.c` 内部使用的 `static` 辅助函数，但不得改变管理器对外接口。
+7. 分配失败时不得改变空闲链表、页属性或 `nr_free`。
 
-- 必须基于 RISC-V 的虚拟内存机制解释，而非 x86。
-- 明确虚拟地址减去偏移量等于物理地址的直接计算关系。
-- 不得修改已有的地址转换宏或页表初始化流程。
+### 输出与验证要求
+
+1. 完成 Best-Fit 的全部核心函数以及 `best_fit_pmm_manager` 注册。
+2. 在 `init_pmm_manager()` 中执行：
+
+```c
+pmm_manager = &best_fit_pmm_manager;
+```
+
+3. 代码应通过 `basic_check()` 和 `best_fit_check()`，并正常输出：
+
+```text
+check_alloc_page() succeeded!
+[Test 2] Best-Fit: PASS
+```
+
+4. 输出修改摘要，说明最优块选择、剩余块拆分、地址有序插入及前后合并分别在哪里完成。
+
+## [RELY]
+
+只依赖以下最小文件和接口：
+
+### `kern/mm/pmm.h` 中的统一管理器接口
+
+```c
+struct pmm_manager {
+    const char *name;
+    void (*init)(void);
+    void (*init_memmap)(struct Page *base, size_t n);
+    struct Page *(*alloc_pages)(size_t n);
+    void (*free_pages)(struct Page *base, size_t n);
+    size_t (*nr_free_pages)(void);
+    void (*check)(void);
+};
+```
+
+### `kern/mm/memlayout.h` 中的空闲块表示
+
+```c
+struct Page {
+    int ref;
+    uint64_t flags;
+    unsigned int property;
+    list_entry_t page_link;
+};
+
+typedef struct {
+    list_entry_t free_list;
+    unsigned int nr_free;
+} free_area_t;
+```
+
+约定如下：
+
+- 只有空闲块首页设置 `PG_property`。
+- 空闲块首页的 `property` 保存该连续块包含的页数。
+- `nr_free` 保存当前所有空闲页的总数，而不是空闲块数量。
+- `le2page(le, page_link)` 用于从链表节点取得对应 `Page`。
+
+### `libs/list.h` 中允许使用的链表操作
+
+```c
+list_init();
+list_empty();
+list_next();
+list_prev();
+list_add();
+list_add_before();
+list_del();
+```
+
+`kern/mm/default_pmm.c` 仅作为 First-Fit 的结构参考；Best-Fit 的候选块选择逻辑必须重新实现，不能找到第一个可用块后立即返回。
+
+## [GUARANTEE]
+
+必须提供以下管理器对象：
+
+```c
+extern const struct pmm_manager best_fit_pmm_manager;
+```
+
+管理器必须注册以下核心函数：
+
+```c
+static void best_fit_init(void);
+static void best_fit_init_memmap(struct Page *base, size_t n);
+static struct Page *best_fit_alloc_pages(size_t n);
+static void best_fit_free_pages(struct Page *base, size_t n);
+static size_t best_fit_nr_free_pages(void);
+static void best_fit_check(void);
+```
+
+允许自行添加内部辅助函数，例如“按地址插入空闲块”或“合并相邻块”，但这些函数必须声明为 `static`，且不能改变以上接口的参数与返回值。
+
+最终注册形式必须与以下语义一致：
+
+```c
+const struct pmm_manager best_fit_pmm_manager = {
+    .name = "best_fit_pmm_manager",
+    .init = best_fit_init,
+    .init_memmap = best_fit_init_memmap,
+    .alloc_pages = best_fit_alloc_pages,
+    .free_pages = best_fit_free_pages,
+    .nr_free_pages = best_fit_nr_free_pages,
+    .check = best_fit_check,
+};
+```
+
+## [SPECIFICATION]
+
+### 1. `best_fit_init()`
+
+**前置状态：** 管理器对象已经被选中，空闲区尚未初始化。
+
+**行为：** 初始化 `free_list` 为空的双向循环链表，并把 `nr_free` 置 0。
+
+**后置效果：** `list_empty(&free_list)` 为真，`nr_free == 0`。
+
+### 2. `best_fit_init_memmap(struct Page *base, size_t n)`
+
+**前置状态：**
+
+- `n > 0`。
+- `[base, base + n)` 是一段连续、合法、尚未加入空闲链表的物理页。
+- 这些页当前均带有 Reserved 标记。
+
+**行为：**
+
+1. 遍历这 `n` 个页，清理旧标志、旧 `property` 和引用计数。
+2. 只在首页 `base` 设置 `property = n` 和 Property 标志。
+3. 将 `base` 按物理地址升序插入 `free_list`；空链表、插入表头中间和追加表尾三种情况都必须正确。
+4. 执行 `nr_free += n`。
+
+**后置效果：** 新空闲块能够被分配器发现，链表仍保持地址有序，总空闲页数增加 `n`。
+
+### 3. `best_fit_alloc_pages(size_t n)`
+
+**前置状态：** `n > 0`，空闲链表结构合法且所有节点均为空闲块首页。
+
+**分支与行为：**
+
+1. 若 `n > nr_free`，立即返回 `NULL`，不得修改任何状态。
+2. 遍历完整空闲链表，忽略 `property < n` 的块。
+3. 在全部可用块中记录 `property` 最小的块；链表按地址排序时，容量相同可保留先遇到的低地址块。
+4. 若遍历后没有候选块，说明总空闲页数虽然可能足够但不存在足够大的连续块，返回 `NULL`，状态保持不变。
+5. 若候选块大小恰好等于 `n`，从链表中删除该块。
+6. 若候选块大于 `n`，分配其前 `n` 页，并让 `page + n` 成为剩余空闲块首页；剩余块的 `property` 为原大小减 `n`，并保持在原链表位置的地址顺序。
+7. 清除已分配块首页的 Property 标志，执行 `nr_free -= n`，返回已分配块首页。
+
+**后置效果：** 返回 `n` 个连续物理页；除选中块及其拆分结果外，其他空闲块不变。
+
+### 4. `best_fit_free_pages(struct Page *base, size_t n)`
+
+**前置状态：**
+
+- `n > 0`。
+- `[base, base + n)` 是一段连续且当前已分配的页。
+- 各页不带 Reserved 和 Property 标志。
+
+**行为：**
+
+1. 清理各页标志与引用计数。
+2. 在 `base` 设置 `property = n` 和 Property 标志。
+3. 按物理地址升序把 `base` 插回空闲链表。
+4. 执行 `nr_free += n`，该计数只增加一次。
+5. 若后继空闲块满足 `base + base->property == next`，将后继块大小累加到 `base->property`，清除后继块 Property 标志并删除其链表节点。
+6. 若前驱空闲块满足 `prev + prev->property == base`，将当前块大小累加到 `prev->property`，清除 `base` 的 Property 标志并删除 `base` 的链表节点。
+7. 必须支持同时与前、后两个空闲块合并，最终链表中只保留合并后大块的首页。
+
+**后置效果：** 被释放页重新可用；链表保持地址有序；任何物理相邻的空闲块不会以两个独立节点长期存在。
+
+### 5. `best_fit_nr_free_pages()`
+
+**行为：** 只读返回 `nr_free`。
+
+**后置效果：** 不修改链表、页属性或计数器。
+
+### 6. `best_fit_check()` 与 `basic_check()`
+
+这两个函数是既有测试，不允许修改。实现应满足其中所有断言，包括：
+
+- 单页和多页分配成功且页面互不重叠；
+- 空链表或不存在足够大连续块时返回 `NULL`；
+- 能正确选择更小的合适空闲块，而非第一个可用块；
+- 拆分后剩余块大小和 Property 标志正确；
+- 释放后能与前后相邻块合并；
+- 测试结束后空闲块数量和空闲页总数恢复到测试前状态。
+
+---
+
+## 最终验收标准
+
+完成两项实现后，在实验指定的 WSL 和 QEMU 环境中编译并执行评分测试，目标输出为：
+
+```text
+[Test 1] Page Init: PASS
+[Test 2] Best-Fit: PASS
+Total Score: 20/20
+```
+
+若测试失败，应把失败项括号中的具体原因、QEMU 输出以及相关函数当前代码一同提供给 AI，不允许通过删除断言、修改测试文本或硬编码 PASS 字符串绕过验证。
 
 ```
 
