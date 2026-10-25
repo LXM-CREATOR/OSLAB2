@@ -147,14 +147,14 @@ Best-Fit 的基本目标是：分配 `n` 个连续页时，遍历全部空闲块
 
 ```c
 pmm_manager = &best_fit_pmm_manager;
-```
+
 
 3. 代码应通过 `basic_check()` 和 `best_fit_check()`，并正常输出：
 
 ```text
 check_alloc_page() succeeded!
 [Test 2] Best-Fit: PASS
-```
+
 
 4. 输出修改摘要，说明最优块选择、剩余块拆分、地址有序插入及前后合并分别在哪里完成。
 
@@ -174,7 +174,7 @@ struct pmm_manager {
     size_t (*nr_free_pages)(void);
     void (*check)(void);
 };
-```
+
 
 ### `kern/mm/memlayout.h` 中的空闲块表示
 
@@ -190,7 +190,7 @@ typedef struct {
     list_entry_t free_list;
     unsigned int nr_free;
 } free_area_t;
-```
+
 
 约定如下：
 
@@ -209,7 +209,7 @@ list_prev();
 list_add();
 list_add_before();
 list_del();
-```
+
 
 `kern/mm/default_pmm.c` 仅作为 First-Fit 的结构参考；Best-Fit 的候选块选择逻辑必须重新实现，不能找到第一个可用块后立即返回。
 
@@ -219,7 +219,6 @@ list_del();
 
 ```c
 extern const struct pmm_manager best_fit_pmm_manager;
-```
 
 管理器必须注册以下核心函数：
 
@@ -230,7 +229,7 @@ static struct Page *best_fit_alloc_pages(size_t n);
 static void best_fit_free_pages(struct Page *base, size_t n);
 static size_t best_fit_nr_free_pages(void);
 static void best_fit_check(void);
-```
+
 
 允许自行添加内部辅助函数，例如“按地址插入空闲块”或“合并相邻块”，但这些函数必须声明为 `static`，且不能改变以上接口的参数与返回值。
 
@@ -246,7 +245,7 @@ const struct pmm_manager best_fit_pmm_manager = {
     .nr_free_pages = best_fit_nr_free_pages,
     .check = best_fit_check,
 };
-```
+
 
 ## [SPECIFICATION]
 
@@ -338,11 +337,11 @@ const struct pmm_manager best_fit_pmm_manager = {
 [Test 1] Page Init: PASS
 [Test 2] Best-Fit: PASS
 Total Score: 20/20
-```
+
 
 若测试失败，应把失败项括号中的具体原因、QEMU 输出以及相关函数当前代码一同提供给 AI，不允许通过删除断言、修改测试文本或硬编码 PASS 字符串绕过验证。
-
 ```
+
 
 #### 思考题回答
 
