@@ -152,13 +152,28 @@
 **Prompt 1（生成核心算法）：**
 
 ```text
-参考 kern/mm/default_pmm.c 的代码框架，在 kern/mm/best_fit_pmm.c 中实现 Best-Fit 分配器。
+[PROMPT]
 
-请在文件中标有 lab2 和 YOUR CODE 的位置填入代码：
-1. best_fit_init：初始化链表和 nr_free 计数器。
-2. best_fit_init_memmap：遍历 base 到 base+n 的页，将它们加入链表，并按物理地址排序。
-3. best_fit_alloc_pages(n)：遍历链表，找到第一个 property >= n 且 property 最小的块。分配后若块有剩余，需切片。
-4. best_fit_free_pages：将释放的页插入链表，并检查前后相邻块是否物理连续（p + p->property == base）以进行合并。
+我们组已实现了 First-Fit，现在正在做 Best-Fit。理论上 Best-Fit 能减少大块内存被切分，但它有什么潜在缺点？在系统频繁申请和释放内存时，它的性能表现如何？请对比两种算法给出分析。
+
+[RELY]
+
+- 算法的时间复杂度（链表遍历次数）。
+- 外部碎片的产生原因。
+- 现代操作系统的内存分配策略（如 Buddy System、SLUB）。
+
+[GUARANTEE]
+
+分析结果需要回答：
+1. Best-Fit 为什么会产生大量难以利用的微小碎片。
+2. 为什么遍历整个空闲链表会带来性能瓶颈。
+3. 为什么实际系统中不单独依赖 Best-Fit。
+
+[SPECIFICATION]
+
+- 必须从空间利用率和时间效率两个维度进行对比。
+- 分析需符合操作系统实际应用场景，不得局限于实验测试用例。
+
 ```
 
 **Prompt 2（生成测试验证分析）：**
