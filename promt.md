@@ -1,180 +1,367 @@
-# Lab 2 实验 AI 辅助记录与排查分析
+# Lab 2 四段式 AI 提示词
 
-本文档用于记录实验过程中向 AI 咨询的具体问题、上下文约束及排查过程。AI 只负责分析原因、核对约束和提供排查建议，最终实现由小组成员自行完成并验证。
+本文档记录 Lab 2 中两个核心任务所使用的标准提示词。每个提示词均按照四段式框架组织：
 
----
-
-## 模块一：物理内存初始化与地址转换
-
-### 问题一：内核虚拟地址与物理地址转换机制
-
-#### [PROMPT]
-
-在阅读 `pmm.c` 时，我注意到代码中使用了全局变量 `va_pa_offset`。在开启了虚拟内存的 RISC-V Sv39 架构下，内核的虚拟地址和物理地址到底是如何转换的？为什么内核通常需要运行在高地址（例如 `0xFFFFFFFFC0000000`）？请解释其底层逻辑，但不要生成具体代码。
-
-#### [RELY]
-
-- 链接脚本中的 `BASE_ADDRESS` 设置。
-- RISC-V Sv39 分页机制（三级页表、大页映射）。
-- 虚拟地址与物理地址的固定偏移量 `va_pa_offset`。
-- `PADDR()` 与 `KADDR()` 宏的定义与作用。
-
-#### [GUARANTEE]
-
-分析结果需要说明：
-1. 页表如何实现内核空间的高半区（High Half）映射。
-2. `va_pa_offset` 的计算方式及其在地址转换中的数学关系。
-3. 为什么这种设计能提高内核访问物理内存的效率。
-
-#### [SPECIFICATION]
-
-- 必须基于 RISC-V 的虚拟内存机制解释，而非 x86。
-- 明确虚拟地址减去偏移量等于物理地址的直接计算关系。
-- 不得修改已有的地址转换宏或页表初始化流程。
+1. **PROMPT（任务说明）**：说明任务详情、修改范围、操作约束和验证要求。
+2. **RELY（依赖说明）**：只提供完成当前任务必需的类型、宏、函数和参考文件。
+3. **GUARANTEE（接口清单）**：规定必须交付或保持不变的对外接口。
+4. **SPECIFICATION（行为规格）**：逐个说明函数的前置状态、执行逻辑、分支处理和后置效果。
 
 ---
 
-### 问题二：页对齐计算宏的原理与必要性
+# 提示词一：物理内存探测与初始化 `page_init`
 
-#### [PROMPT]
+## [PROMPT]
 
-在 `page_init` 函数中，我看到系统使用了 `ROUNDUP((void *)end, PGSIZE)` 和 `ROUNDDOWN(memory_base + memory_size, PGSIZE)`。请解释为什么要这样处理？如果不对齐，会导致什么严重后果？请提供排查和验证的思路。
+你是一名熟悉 RISC-V、ucore 和物理内存管理的内核开发者。请在现有工程中完成 `kern/mm/pmm.c` 内标有 `//lab2 function1 YOUR CODE` 的 `page_init()` 函数。
 
-#### [RELY]
+### 任务详情
 
-- `PGSIZE`：页大小，固定为 4KB (4096 字节)。
-- `end`：内核镜像结束位置的虚拟地址符号。
-- `struct Page` 数组的起始位置。
-- 物理内存的有效范围。
+`page_init()` 需要读取设备树解析出的物理内存起点和大小，建立物理页描述符数组 `pages`，将不可分配区域标记为保留，并把扣除 OpenSBI、内核镜像、内核数据以及 `Page` 描述符数组自身占用空间后的完整空闲页交给当前物理内存管理器。
 
-#### [GUARANTEE]
+### 操作约束
 
-分析结果需要回答：
-1. 为什么 `end` 符号的地址不一定是 4KB 的整数倍。
-2. 向上对齐（`ROUNDUP`）防止了什么类型的数据覆盖？
-3. 向下对齐（`ROUNDDOWN`）避免了哪种越界访问风险？
+1. 必须直接修改工程中的 `kern/mm/pmm.c`，不能只给出伪代码或孤立代码片段。
+2. 只允许修改 `page_init()` 以及该函数紧邻的必要注释，不得修改 `pmm.h`、`memlayout.h`、`dtb.c`、链接脚本和测试文件。
+3. 不得改变 `pmm_init()` 的调用顺序，不得绕过 `init_memmap()` 直接操作某个具体分配器。
+4. 不得把物理内存大小硬编码为 128 MiB，必须使用 `get_memory_base()` 和 `get_memory_size()`。
+5. 必须区分虚拟地址和物理地址。链接符号 `end` 是内核虚拟地址，参与物理内存边界计算前必须通过 `PADDR()` 转换。
+6. 页边界计算必须使用工程已有的 `ROUNDUP`、`ROUNDDOWN`、`PGSIZE`、`PPN` 等宏，不重复定义同类宏。
+7. 不得把内核镜像、`Page` 数组或非完整页加入空闲链表。
 
-#### [SPECIFICATION]
+### 输出与验证要求
 
-- 必须明确指出内存管理的最小单位是物理页。
-- 结论需指出：未对齐的内存不能直接加入空闲链表或描述符数组。
-- 不得硬编码页数组的地址，必须依赖宏进行计算。
+1. 输出对 `kern/mm/pmm.c` 的实际修改，并简要解释各计算步骤。
+2. 修改后代码必须能够通过现有工具链编译，不产生新的警告或未定义符号。
+3. 在评分测试注入后，应输出：
 
----
+```text
+[Test 1] Page Init: PASS
+```
 
-## 模块二：Best-Fit 算法与链表操作
+4. 同时不得破坏后续的分配器自检和 Best-Fit 测试。
 
-### 问题一：`le2page` 宏的底层指针转换机制
+## [RELY]
 
-#### [PROMPT]
+仅使用以下完成任务所需的最小依赖集合：
 
-在 `best_fit_pmm.c` 中，测试函数会用到 `le2page(le, page_link)` 这个宏。已知 `le` 是双向链表的节点指针，这个宏为什么能直接转换出 `struct Page*` 指针？请解释其底层原理和内存布局关系，不需要重写宏定义。
+### 设备树提供的物理内存信息
 
-#### [RELY]
+```c
+uint64_t get_memory_base(void);
+uint64_t get_memory_size(void);
+```
 
-- `struct Page` 结构体的定义（包含 `page_link` 成员）。
-- 双向链表节点 `list_entry_t` 的结构。
-- C 语言中结构体成员的内存偏移量（`offsetof`）。
-- Linux 内核经典的 `container_of` 思想。
+### `kern/mm/pmm.c` 和 `kern/mm/pmm.h` 已有对象
 
-#### [GUARANTEE]
+```c
+extern char end[];
 
-分析结果需要说明：
-1. 为什么知道成员地址能推导出结构体首地址。
-2. `page_link` 在 `struct Page` 中的位置对转换的影响。
-3. 这种设计对操作系统内核数据结构复用性的意义。
+struct Page *pages;
+size_t npage;
+const size_t nbase;
+uint64_t va_pa_offset;
 
-#### [SPECIFICATION]
+static void init_memmap(struct Page *base, size_t n);
+```
 
-- 需要解释“地址相减”的底层指针运算逻辑。
-- 不得修改测试函数 `basic_check` 或 `best_fit_check`。
+其中：
 
----
+- `nbase` 是 DRAM 起始地址对应的物理页号。
+- `npage` 表示物理内存末端对应的物理页号上界。
+- `pages[i]` 描述的物理页号为 `i + nbase`。
+- `PADDR(kva)` 把内核虚拟地址转换为物理地址。
 
-### 问题二：Best-Fit 算法的缺陷与性能权衡
+### `kern/mm/memlayout.h` 与 `kern/mm/mmu.h` 已有定义
 
-#### [PROMPT]
+```c
+#define PHYSICAL_MEMORY_OFFSET  0xFFFFFFFF40000000
+#define PGSIZE                 4096
 
-我们组已实现了 First-Fit，现在正在做 Best-Fit。理论上 Best-Fit 能减少大块内存被切分，但它有什么潜在缺点？在系统频繁申请和释放内存时，它的性能表现如何？请对比两种算法给出分析。
+struct Page {
+    int ref;
+    uint64_t flags;
+    unsigned int property;
+    list_entry_t page_link;
+};
+```
 
-#### [RELY]
+允许使用 `SetPageReserved()`、`ROUNDUP()`、`ROUNDDOWN()` 和 `PPN()` 等现有宏。
 
-- 算法的时间复杂度（链表遍历次数）。
-- 外部碎片的产生原因。
-- 现代操作系统的内存分配策略（如 Buddy System、SLUB）。
+## [GUARANTEE]
 
-#### [GUARANTEE]
+不得新增或改变对外函数接口。实现必须正确维护以下全局状态并调用既有内部接口：
 
-分析结果需要回答：
-1. Best-Fit 为什么会产生大量难以利用的微小碎片。
-2. 为什么遍历整个空闲链表会带来性能瓶颈。
-3. 为什么实际系统中不单独依赖 Best-Fit。
+```c
+static void page_init(void);
 
-#### [SPECIFICATION]
+extern struct Page *pages;
+extern size_t npage;
+extern const size_t nbase;
+extern uint64_t va_pa_offset;
 
-- 必须从空间利用率和时间效率两个维度进行对比。
-- 分析需符合操作系统实际应用场景，不得局限于实验测试用例。
+static void init_memmap(struct Page *base, size_t n);
+```
 
----
+实现完成后必须保证：
 
-## 模块三：Bug 排查与调试求助
+1. `va_pa_offset == PHYSICAL_MEMORY_OFFSET`。
+2. `npage == PPN(memory_base + memory_size)`。
+3. `pages` 非空、按页对齐，并位于内核 `end` 之后。
+4. 内核镜像尾页与 `Page` 数组占用页保持保留状态。
+5. `page2pa()` 与 `pa2page()` 对合法页能够正确往返转换。
+6. 至少存在一个可交给 `init_memmap()` 管理的完整空闲页，否则应明确报错。
 
-### 问题一：地址转换宏触发 Panic 报错
+## [SPECIFICATION]
 
-#### [PROMPT]
+### `page_init()`
 
-编写 `page_init` 时，代码运行直接报错：`panic: PADDR called with invalid kva 000000000000...`。我传入宏的是一个内核结束地址，为什么会导致崩溃？请分析最可能的原因，并给出最小范围的修正建议。不要直接给出完整函数。
+**前置状态：**
 
-#### [RELY]
+- `dtb_init()` 已经执行，设备树中的内存信息可通过 `get_memory_base()` 和 `get_memory_size()` 读取。
+- 当前 `pmm_manager` 已完成 `init()`，空闲链表处于已初始化但尚未加入可用页的状态。
+- 链接符号 `end` 指向内核镜像和静态数据结束后的虚拟地址。
 
-- `PADDR()` 宏的内部断言逻辑（检查地址是否小于 `KERNBASE`）。
-- `end` 符号的虚拟地址属性。
-- `va_pa_offset` 偏移量的生效时机。
+**处理流程：**
 
-#### [GUARANTEE]
+1. 读取 `memory_base` 和 `memory_size`。
+2. 若任一值为 0，则设备树数据无效，调用 `panic()` 停止初始化。
+3. 将 `va_pa_offset` 设为固定的 `PHYSICAL_MEMORY_OFFSET`，不能使用 `KERNBASE - memory_base` 代替。
+4. 计算物理内存末地址，并令 `npage` 等于末地址的物理页号上界。
+5. 将 `pages` 放在 `end` 之后的第一个页边界处。
+6. 初始化受管理物理页对应的 `Page` 描述符，先统一标记为保留，防止尚未确认的区域被分配。
+7. 用 `PADDR(end)` 和 `PADDR(pages)` 完成虚拟地址到物理地址的转换。
+8. 计算 `Page` 数组末端占用的物理地址，并向上对齐得到第一个候选空闲页。
+9. 将物理内存末端向下对齐，得到空闲区上界。
+10. 若空闲区起点不小于终点，则没有可用物理页，调用 `panic()`。
+11. 把空闲区物理页号换算成 `pages` 数组下标，调用 `init_memmap()` 注册连续空闲页。
 
-分析结果需要说明：
-1. 什么情况下会触发该 Panic（传入非法地址或已经是物理地址）。
-2. 如何正确地将虚拟地址边界转换为物理地址边界。
-3. 排查时应该使用什么断言或打印语句进行验证。
+**后置效果：**
 
-#### [SPECIFICATION]
-
-- 不得通过删除断言或修改 `PADDR` 宏的定义来绕过报错。
-- 修正建议必须明确区分虚拟地址和物理地址的使用场景。
-
----
-
-### 问题二：测试脚本中的 `nr_free` 页数校验失败
-
-#### [PROMPT]
-
-运行 `make grade` 时，`check page init` 报 WRONG。但我的 `make qemu` 能正常输出 `check_alloc_page() succeeded!`。我在 `page_init` 里用 `npage * sizeof(struct Page)` 减去内核占用算出了 `nr_free`。请分析测试脚本到底在检查 `page_init` 的什么核心指标？我遗漏了什么计算？
-
-#### [RELY]
-
-- `check_alloc_page()` 的基本逻辑（仅测试分配与释放能力）。
-- 物理内存的实际划分范围（OpenSBI、内核、`Page` 数组、空闲页）。
-- 测试脚本对 `nr_free`（可用物理页总数）的精确校验。
-
-#### [GUARANTEE]
-
-分析结果需要说明：
-1. 为什么分配逻辑正确但初始化数量不对。
-2. `Page` 描述符数组本身占用的物理内存大小如何精确计算。
-3. OpenSBI 等保留区的物理地址范围是否被正确扣除。
-
-#### [SPECIFICATION]
-
-- 需要提供计算剩余可用物理页的精确数学公式（考虑页对齐和边界情况）。
-- 不得通过修改测试脚本来迁就错误的 `nr_free` 值。
+- 所有不可分配区域仍保持 Reserved。
+- 只有 `Page` 数组之后、物理内存末端之前的完整页面进入空闲链表。
+- `nr_free_pages()` 返回值大于 0，且不超过 `npage - nbase`。
 
 ---
 
-## 验证目标
+# 提示词二：Best-Fit 连续物理内存分配器
 
-完成排查并由小组成员自行实现、复核后，目标测试结果为：
+## [PROMPT]
+
+你是一名熟悉 C 语言、双向链表和 ucore 物理页管理框架的内核开发者。请在 `kern/mm/best_fit_pmm.c` 中标有 `//lab2 function2-2 YOUR CODE` 的位置实现 Best-Fit 连续物理内存分配器，并在 `kern/mm/pmm.c` 的 `init_pmm_manager()` 中选择 `best_fit_pmm_manager`。
+
+Best-Fit 的基本目标是：分配 `n` 个连续页时，遍历全部空闲块，在所有 `property >= n` 的候选块中选取容量最小的一块；释放时保持空闲链表按物理地址升序排列，并合并物理地址连续的相邻空闲块。
+
+### 操作约束
+
+1. 必须直接修改工程中的真实文件，不能只展示示例代码。
+2. 允许修改范围仅限：
+   - `kern/mm/best_fit_pmm.c` 中待实现的分配器代码；
+   - `kern/mm/pmm.c` 的 `init_pmm_manager()` 中管理器选择语句。
+3. `basic_check()`、`best_fit_check()` 及其已有断言和测试场景不得修改、删除或绕过。
+4. 不得修改 `pmm.h`、`memlayout.h`、`list.h` 和 `best_fit_pmm.h` 中已有接口与数据结构。
+5. 必须复用工程已有双向链表接口，不得另外实现数组、树或新的容器替代 `free_list`。
+6. 可以新增仅在 `best_fit_pmm.c` 内部使用的 `static` 辅助函数，但不得改变管理器对外接口。
+7. 分配失败时不得改变空闲链表、页属性或 `nr_free`。
+
+### 输出与验证要求
+
+1. 完成 Best-Fit 的全部核心函数以及 `best_fit_pmm_manager` 注册。
+2. 在 `init_pmm_manager()` 中执行：
+
+```c
+pmm_manager = &best_fit_pmm_manager;
+```
+
+3. 代码应通过 `basic_check()` 和 `best_fit_check()`，并正常输出：
+
+```text
+check_alloc_page() succeeded!
+[Test 2] Best-Fit: PASS
+```
+
+4. 输出修改摘要，说明最优块选择、剩余块拆分、地址有序插入及前后合并分别在哪里完成。
+
+## [RELY]
+
+只依赖以下最小文件和接口：
+
+### `kern/mm/pmm.h` 中的统一管理器接口
+
+```c
+struct pmm_manager {
+    const char *name;
+    void (*init)(void);
+    void (*init_memmap)(struct Page *base, size_t n);
+    struct Page *(*alloc_pages)(size_t n);
+    void (*free_pages)(struct Page *base, size_t n);
+    size_t (*nr_free_pages)(void);
+    void (*check)(void);
+};
+```
+
+### `kern/mm/memlayout.h` 中的空闲块表示
+
+```c
+struct Page {
+    int ref;
+    uint64_t flags;
+    unsigned int property;
+    list_entry_t page_link;
+};
+
+typedef struct {
+    list_entry_t free_list;
+    unsigned int nr_free;
+} free_area_t;
+```
+
+约定如下：
+
+- 只有空闲块首页设置 `PG_property`。
+- 空闲块首页的 `property` 保存该连续块包含的页数。
+- `nr_free` 保存当前所有空闲页的总数，而不是空闲块数量。
+- `le2page(le, page_link)` 用于从链表节点取得对应 `Page`。
+
+### `libs/list.h` 中允许使用的链表操作
+
+```c
+list_init();
+list_empty();
+list_next();
+list_prev();
+list_add();
+list_add_before();
+list_del();
+```
+
+`kern/mm/default_pmm.c` 仅作为 First-Fit 的结构参考；Best-Fit 的候选块选择逻辑必须重新实现，不能找到第一个可用块后立即返回。
+
+## [GUARANTEE]
+
+必须提供以下管理器对象：
+
+```c
+extern const struct pmm_manager best_fit_pmm_manager;
+```
+
+管理器必须注册以下核心函数：
+
+```c
+static void best_fit_init(void);
+static void best_fit_init_memmap(struct Page *base, size_t n);
+static struct Page *best_fit_alloc_pages(size_t n);
+static void best_fit_free_pages(struct Page *base, size_t n);
+static size_t best_fit_nr_free_pages(void);
+static void best_fit_check(void);
+```
+
+允许自行添加内部辅助函数，例如“按地址插入空闲块”或“合并相邻块”，但这些函数必须声明为 `static`，且不能改变以上接口的参数与返回值。
+
+最终注册形式必须与以下语义一致：
+
+```c
+const struct pmm_manager best_fit_pmm_manager = {
+    .name = "best_fit_pmm_manager",
+    .init = best_fit_init,
+    .init_memmap = best_fit_init_memmap,
+    .alloc_pages = best_fit_alloc_pages,
+    .free_pages = best_fit_free_pages,
+    .nr_free_pages = best_fit_nr_free_pages,
+    .check = best_fit_check,
+};
+```
+
+## [SPECIFICATION]
+
+### 1. `best_fit_init()`
+
+**前置状态：** 管理器对象已经被选中，空闲区尚未初始化。
+
+**行为：** 初始化 `free_list` 为空的双向循环链表，并把 `nr_free` 置 0。
+
+**后置效果：** `list_empty(&free_list)` 为真，`nr_free == 0`。
+
+### 2. `best_fit_init_memmap(struct Page *base, size_t n)`
+
+**前置状态：**
+
+- `n > 0`。
+- `[base, base + n)` 是一段连续、合法、尚未加入空闲链表的物理页。
+- 这些页当前均带有 Reserved 标记。
+
+**行为：**
+
+1. 遍历这 `n` 个页，清理旧标志、旧 `property` 和引用计数。
+2. 只在首页 `base` 设置 `property = n` 和 Property 标志。
+3. 将 `base` 按物理地址升序插入 `free_list`；空链表、插入表头中间和追加表尾三种情况都必须正确。
+4. 执行 `nr_free += n`。
+
+**后置效果：** 新空闲块能够被分配器发现，链表仍保持地址有序，总空闲页数增加 `n`。
+
+### 3. `best_fit_alloc_pages(size_t n)`
+
+**前置状态：** `n > 0`，空闲链表结构合法且所有节点均为空闲块首页。
+
+**分支与行为：**
+
+1. 若 `n > nr_free`，立即返回 `NULL`，不得修改任何状态。
+2. 遍历完整空闲链表，忽略 `property < n` 的块。
+3. 在全部可用块中记录 `property` 最小的块；链表按地址排序时，容量相同可保留先遇到的低地址块。
+4. 若遍历后没有候选块，说明总空闲页数虽然可能足够但不存在足够大的连续块，返回 `NULL`，状态保持不变。
+5. 若候选块大小恰好等于 `n`，从链表中删除该块。
+6. 若候选块大于 `n`，分配其前 `n` 页，并让 `page + n` 成为剩余空闲块首页；剩余块的 `property` 为原大小减 `n`，并保持在原链表位置的地址顺序。
+7. 清除已分配块首页的 Property 标志，执行 `nr_free -= n`，返回已分配块首页。
+
+**后置效果：** 返回 `n` 个连续物理页；除选中块及其拆分结果外，其他空闲块不变。
+
+### 4. `best_fit_free_pages(struct Page *base, size_t n)`
+
+**前置状态：**
+
+- `n > 0`。
+- `[base, base + n)` 是一段连续且当前已分配的页。
+- 各页不带 Reserved 和 Property 标志。
+
+**行为：**
+
+1. 清理各页标志与引用计数。
+2. 在 `base` 设置 `property = n` 和 Property 标志。
+3. 按物理地址升序把 `base` 插回空闲链表。
+4. 执行 `nr_free += n`，该计数只增加一次。
+5. 若后继空闲块满足 `base + base->property == next`，将后继块大小累加到 `base->property`，清除后继块 Property 标志并删除其链表节点。
+6. 若前驱空闲块满足 `prev + prev->property == base`，将当前块大小累加到 `prev->property`，清除 `base` 的 Property 标志并删除 `base` 的链表节点。
+7. 必须支持同时与前、后两个空闲块合并，最终链表中只保留合并后大块的首页。
+
+**后置效果：** 被释放页重新可用；链表保持地址有序；任何物理相邻的空闲块不会以两个独立节点长期存在。
+
+### 5. `best_fit_nr_free_pages()`
+
+**行为：** 只读返回 `nr_free`。
+
+**后置效果：** 不修改链表、页属性或计数器。
+
+### 6. `best_fit_check()` 与 `basic_check()`
+
+这两个函数是既有测试，不允许修改。实现应满足其中所有断言，包括：
+
+- 单页和多页分配成功且页面互不重叠；
+- 空链表或不存在足够大连续块时返回 `NULL`；
+- 能正确选择更小的合适空闲块，而非第一个可用块；
+- 拆分后剩余块大小和 Property 标志正确；
+- 释放后能与前后相邻块合并；
+- 测试结束后空闲块数量和空闲页总数恢复到测试前状态。
+
+---
+
+## 最终验收标准
+
+完成两项实现后，在实验指定的 WSL 和 QEMU 环境中编译并执行评分测试，目标输出为：
 
 ```text
 [Test 1] Page Init: PASS
 [Test 2] Best-Fit: PASS
+Total Score: 20/20
+```
+
+若测试失败，应把失败项括号中的具体原因、QEMU 输出以及相关函数当前代码一同提供给 AI，不允许通过删除断言、修改测试文本或硬编码 PASS 字符串绕过验证。
