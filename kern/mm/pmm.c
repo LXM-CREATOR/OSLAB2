@@ -63,7 +63,7 @@ size_t nr_free_pages(void) {
     return pmm_manager->nr_free_pages();
 }
 
-//lab2 function1 YOUR CODE
+//lab2 function1 2411438
 static void page_init(void) {
     // 1. 获取物理内存的基址和大小
     extern uint64_t get_memory_base(void);
